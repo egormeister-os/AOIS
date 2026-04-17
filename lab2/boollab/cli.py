@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .core import BooleanFunction, format_implicant_pattern
+from .core import BooleanFunction
 from .minimization import build_karnaugh_map, minimize_function
 
 
@@ -36,16 +36,17 @@ def _format_gluing(result, variables: tuple[str, ...]) -> str:
         lines.append(f"Stage {stage.number}")
         lines.append(
             "Input: "
-            + ", ".join(implicant.term(variables) for implicant in stage.input_terms)
+            + ", ".join(implicant.term(variables, result.form) for implicant in stage.input_terms)
         )
         for pair in stage.combinations:
             lines.append(
-                f"  {pair.left.term(variables)} + {pair.right.term(variables)} -> "
-                f"{pair.result.term(variables)}"
+                f"  {pair.left.term(variables, result.form)} + "
+                f"{pair.right.term(variables, result.form)} -> "
+                f"{pair.result.term(variables, result.form)}"
             )
         lines.append(
             "Result: "
-            + ", ".join(implicant.term(variables) for implicant in stage.output_terms)
+            + ", ".join(implicant.term(variables, result.form) for implicant in stage.output_terms)
         )
     return "\n".join(lines)
 
@@ -53,11 +54,12 @@ def _format_gluing(result, variables: tuple[str, ...]) -> str:
 def _format_prime_chart(result, variables: tuple[str, ...]) -> str:
     if not result.chart_rows:
         return "Prime implicant chart is empty."
-    header = ["Implicant"] + [str(column) for column in result.chart_columns]
+    label = "Implicant" if result.form == "dnf" else "Clause"
+    header = [label] + [str(column) for column in result.chart_columns]
     lines = [" | ".join(header)]
     for row in result.chart_rows:
         coverage = ["X" if covered else "." for covered in row.coverage]
-        lines.append(" | ".join([row.implicant.term(variables), *coverage]))
+        lines.append(" | ".join([row.implicant.term(variables, result.form), *coverage]))
     return "\n".join(lines)
 
 
@@ -74,7 +76,7 @@ def _format_karnaugh_map(kmap, variables: tuple[str, ...]) -> str:
         lines.append("Groups:")
         for index, group in enumerate(kmap.groups, start=1):
             cells = ", ".join(f"{layer}/{row}/{column}" for layer, row, column in group.cells)
-            term = format_implicant_pattern(group.implicant.pattern, variables)
+            term = group.implicant.term(variables, kmap.form)
             lines.append(f"  K{index}: {term}; cells: {cells}")
     else:
         lines.append("Groups: none")
@@ -82,10 +84,30 @@ def _format_karnaugh_map(kmap, variables: tuple[str, ...]) -> str:
     return "\n".join(lines)
 
 
+def _format_terms(implicants, variables: tuple[str, ...], form: str) -> str:
+    if not implicants:
+        return "none"
+    return ", ".join(implicant.term(variables, form) for implicant in implicants)
+
+
+def _prime_terms_label(form: str) -> str:
+    return "Prime implicants" if form == "dnf" else "Prime clauses"
+
+
+def _redundant_terms_label(form: str) -> str:
+    return (
+        "Removed as redundant implicants"
+        if form == "dnf"
+        else "Removed as redundant clauses"
+    )
+
+
 def build_report(expression: str) -> str:
     function = BooleanFunction.from_expression(expression)
-    minimization = minimize_function(function)
-    kmap = build_karnaugh_map(function)
+    dnf_minimization = minimize_function(function, form="dnf")
+    knf_minimization = minimize_function(function, form="knf")
+    dnf_kmap = build_karnaugh_map(function, form="dnf")
+    knf_kmap = build_karnaugh_map(function, form="knf")
     numeric = function.numeric_forms()
     index_form = function.index_form()
     fictive = function.fictive_variables()
@@ -109,36 +131,40 @@ def build_report(expression: str) -> str:
         "Boolean derivatives:",
         _format_derivatives(function),
         "",
-        "Calculation method:",
-        _format_gluing(minimization, function.variables),
-        "Prime implicants: "
-        + ", ".join(implicant.term(function.variables) for implicant in minimization.prime_implicants),
-        "Removed as redundant: "
-        + (
-            ", ".join(
-                implicant.term(function.variables)
-                for implicant in minimization.redundant_implicants
-            )
-            if minimization.redundant_implicants
-            else "none"
-        ),
-        f"Result: {minimization.expression}",
+        "Calculation method (DNF):",
+        _format_gluing(dnf_minimization, function.variables),
+        f"{_prime_terms_label('dnf')}: "
+        + _format_terms(dnf_minimization.prime_implicants, function.variables, "dnf"),
+        f"{_redundant_terms_label('dnf')}: "
+        + _format_terms(dnf_minimization.redundant_implicants, function.variables, "dnf"),
+        f"Result: {dnf_minimization.expression}",
         "",
-        "Calculation-tabular method:",
-        _format_gluing(minimization, function.variables),
-        _format_prime_chart(minimization, function.variables),
-        "Removed as redundant: "
-        + (
-            ", ".join(
-                implicant.term(function.variables)
-                for implicant in minimization.redundant_implicants
-            )
-            if minimization.redundant_implicants
-            else "none"
-        ),
-        f"Result: {minimization.expression}",
+        "Calculation method (KNF):",
+        _format_gluing(knf_minimization, function.variables),
+        f"{_prime_terms_label('knf')}: "
+        + _format_terms(knf_minimization.prime_implicants, function.variables, "knf"),
+        f"{_redundant_terms_label('knf')}: "
+        + _format_terms(knf_minimization.redundant_implicants, function.variables, "knf"),
+        f"Result: {knf_minimization.expression}",
         "",
-        "Karnaugh map:",
-        _format_karnaugh_map(kmap, function.variables),
+        "Calculation-tabular method (DNF):",
+        _format_gluing(dnf_minimization, function.variables),
+        _format_prime_chart(dnf_minimization, function.variables),
+        f"{_redundant_terms_label('dnf')}: "
+        + _format_terms(dnf_minimization.redundant_implicants, function.variables, "dnf"),
+        f"Result: {dnf_minimization.expression}",
+        "",
+        "Calculation-tabular method (KNF):",
+        _format_gluing(knf_minimization, function.variables),
+        _format_prime_chart(knf_minimization, function.variables),
+        f"{_redundant_terms_label('knf')}: "
+        + _format_terms(knf_minimization.redundant_implicants, function.variables, "knf"),
+        f"Result: {knf_minimization.expression}",
+        "",
+        "Karnaugh map (DNF):",
+        _format_karnaugh_map(dnf_kmap, function.variables),
+        "",
+        "Karnaugh map (KNF):",
+        _format_karnaugh_map(knf_kmap, function.variables),
     ]
     return "\n".join(sections)

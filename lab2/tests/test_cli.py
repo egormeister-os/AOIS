@@ -11,10 +11,16 @@ def test_build_report_contains_expected_sections() -> None:
     assert "SDNF: (!a&b) | (a&!b) | (a&b)" in report
     assert "Post classes: T0=yes, T1=yes, S=no, M=yes, L=no" in report
     assert "D_ab: 1" in report
-    assert "Calculation-tabular method:" in report
-    assert "Calculation-tabular method:\nStage 1" in report
+    assert "Calculation method (DNF):" in report
+    assert "Calculation method (KNF):" in report
+    assert "Calculation-tabular method (DNF):" in report
+    assert "Calculation-tabular method (KNF):" in report
+    assert "Karnaugh map (DNF):" in report
+    assert "Karnaugh map (KNF):" in report
+    assert "Calculation-tabular method (DNF):\nStage 1" in report
     assert "K1: a; cells:" in report
     assert "Result: a | b" in report
+    assert "Result: (a|b)" in report
 
 
 def test_main_uses_arguments_and_returns_zero(capsys) -> None:

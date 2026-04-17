@@ -40,7 +40,9 @@ class Implicant:
             return None
         return Implicant("".join(pattern), self.minterms | other.minterms)
 
-    def term(self, variables: tuple[str, ...]) -> str:
+    def term(self, variables: tuple[str, ...], form: str = "dnf") -> str:
+        if form == "knf":
+            return _format_clause_pattern(self.pattern, variables)
         return format_implicant_pattern(self.pattern, variables)
 
 
@@ -74,6 +76,7 @@ class MinimizationResult:
     chart_columns: tuple[int, ...]
     chart_rows: tuple[PrimeChartRow, ...]
     expression: str
+    form: str = "dnf"
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,47 @@ class KarnaughMap:
     layers: tuple[KarnaughLayer, ...]
     groups: tuple[KarnaughGroup, ...]
     expression: str
+    form: str = "dnf"
+
+
+def _normalize_form(form: str) -> str:
+    normalized = form.lower()
+    if normalized not in {"dnf", "knf"}:
+        raise ValueError("form must be either 'dnf' or 'knf'")
+    return normalized
+
+
+def _target_value(form: str) -> int:
+    return 1 if form == "dnf" else 0
+
+
+def _target_indexes(function: BooleanFunction, form: str) -> list[int]:
+    return function.minterm_indexes() if form == "dnf" else function.maxterm_indexes()
+
+
+def _empty_expression(form: str) -> str:
+    return "0" if form == "dnf" else "1"
+
+
+def _universal_expression(form: str) -> str:
+    return "1" if form == "dnf" else "0"
+
+
+def _join_symbol(form: str) -> str:
+    return " | " if form == "dnf" else " & "
+
+
+def _format_clause_pattern(pattern: str, variables: tuple[str, ...]) -> str:
+    literals = []
+    for bit, variable in zip(pattern, variables):
+        if bit == "-":
+            continue
+        literals.append(variable if bit == "0" else f"!{variable}")
+    if not literals:
+        return "0"
+    if len(literals) == 1:
+        return literals[0]
+    return f"({'|'.join(literals)})"
 
 
 def _sort_key(implicant: Implicant) -> tuple[int, str]:
@@ -110,13 +154,13 @@ def _merge_implicants(existing: Implicant | None, new: Implicant) -> Implicant:
 
 
 def _expression_from_implicants(
-    implicants: tuple[Implicant, ...], variables: tuple[str, ...], empty_value: str
+    implicants: tuple[Implicant, ...], variables: tuple[str, ...], form: str
 ) -> str:
     if not implicants:
-        return empty_value
+        return _empty_expression(form)
     if len(implicants) == 1 and implicants[0].pattern == "-" * len(variables):
-        return "1"
-    return " | ".join(implicant.term(variables) for implicant in implicants)
+        return _universal_expression(form)
+    return _join_symbol(form).join(implicant.term(variables, form) for implicant in implicants)
 
 
 def _exact_cover(minterms: list[int], prime_implicants: list[Implicant]) -> tuple[Implicant, ...]:
@@ -186,15 +230,25 @@ def _exact_cover(minterms: list[int], prime_implicants: list[Implicant]) -> tupl
     return best_solution
 
 
-def minimize_function(function: BooleanFunction) -> MinimizationResult:
+def minimize_function(function: BooleanFunction, form: str = "dnf") -> MinimizationResult:
+    form = _normalize_form(form)
     variables = function.variables
     variable_count = len(variables)
-    minterms = function.minterm_indexes()
+    minterms = _target_indexes(function, form)
     if not minterms:
-        return MinimizationResult((), (), (), (), (), (), "0")
+        return MinimizationResult((), (), (), (), (), (), _empty_expression(form), form=form)
     if variable_count == 0:
         universal = Implicant("", frozenset({0}))
-        return MinimizationResult((), (universal,), (universal,), (), (0,), (), "1")
+        return MinimizationResult(
+            (),
+            (universal,),
+            (universal,),
+            (),
+            (0,),
+            (),
+            _universal_expression(form),
+            form=form,
+        )
 
     current = {
         format(index, f"0{variable_count}b"): Implicant(
@@ -267,7 +321,8 @@ def minimize_function(function: BooleanFunction) -> MinimizationResult:
         redundant_implicants=redundant_implicants,
         chart_columns=chart_columns,
         chart_rows=chart_rows,
-        expression=_expression_from_implicants(selected_implicants, variables, "0"),
+        expression=_expression_from_implicants(selected_implicants, variables, form),
+        form=form,
     )
 
 
@@ -378,12 +433,14 @@ def _pattern_from_cells(cells: tuple[tuple[int, ...], ...]) -> str:
 def build_karnaugh_map(
     function: BooleanFunction,
     result: MinimizationResult | None = None,
+    form: str = "dnf",
 ) -> KarnaughMap:
     del result  # Retained for backward compatibility; the map minimizes independently.
+    form = _normalize_form(form)
     layers, cell_lookup, coordinate_lookup, dimensions = _karnaugh_layers(function)
-    minterms = function.minterm_indexes()
+    minterms = _target_indexes(function, form)
     if not minterms:
-        return KarnaughMap(layers, (), "0")
+        return KarnaughMap(layers, (), _empty_expression(form), form=form)
 
     candidates: dict[str, Implicant] = {}
     candidate_cells: dict[str, tuple[tuple[str, str, str], ...]] = {}
@@ -409,7 +466,10 @@ def build_karnaugh_map(
                                 for row_index in row_indexes
                                 for column_index in column_indexes
                             )
-                            if any(function._value_by_bits[bits] == 0 for bits in bits_group):
+                            if any(
+                                function._value_by_bits[bits] != _target_value(form)
+                                for bits in bits_group
+                            ):
                                 continue
                             pattern = _pattern_from_cells(bits_group)
                             candidates.setdefault(
@@ -444,5 +504,6 @@ def build_karnaugh_map(
     return KarnaughMap(
         layers=layers,
         groups=groups,
-        expression=_expression_from_implicants(selected_implicants, function.variables, "0"),
+        expression=_expression_from_implicants(selected_implicants, function.variables, form),
+        form=form,
     )
