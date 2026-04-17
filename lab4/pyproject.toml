@@ -1,0 +1,13 @@
+[tool.pytest.ini_options]
+addopts = "-ra"
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["src/hash_table"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = false

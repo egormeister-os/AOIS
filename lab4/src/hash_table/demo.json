@@ -1,0 +1,26 @@
+{
+  "size": 5,
+  "base": 100,
+  "items": [
+    {
+      "key": 1,
+      "value": "Alice"
+    },
+    {
+      "key": 2,
+      "value": "Diana"
+    },
+    {
+      "key": 6,
+      "value": "Bob"
+    },
+    {
+      "key": 7,
+      "value": "Eve"
+    },
+    {
+      "key": 11,
+      "value": "Charlie"
+    }
+  ]
+}
