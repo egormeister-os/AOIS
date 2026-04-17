@@ -85,7 +85,7 @@ def _format_karnaugh_map(kmap, variables: tuple[str, ...]) -> str:
 def build_report(expression: str) -> str:
     function = BooleanFunction.from_expression(expression)
     minimization = minimize_function(function)
-    kmap = build_karnaugh_map(function, minimization)
+    kmap = build_karnaugh_map(function)
     numeric = function.numeric_forms()
     index_form = function.index_form()
     fictive = function.fictive_variables()

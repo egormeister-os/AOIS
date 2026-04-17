@@ -289,7 +289,14 @@ def _bits_label(bits: tuple[int, ...]) -> str:
     return "".join(str(bit) for bit in bits) or "-"
 
 
-def build_karnaugh_map(function: BooleanFunction, result: MinimizationResult) -> KarnaughMap:
+def _karnaugh_layers(
+    function: BooleanFunction,
+) -> tuple[
+    tuple[KarnaughLayer, ...],
+    dict[tuple[int, ...], tuple[str, str, str]],
+    dict[tuple[int, int, int], tuple[int, ...]],
+    tuple[int, int, int],
+]:
     variables = function.variables
     row_variables, column_variables, layer_variables = _karnaugh_layout(variables)
     row_codes = gray_code(len(row_variables))
@@ -298,17 +305,18 @@ def build_karnaugh_map(function: BooleanFunction, result: MinimizationResult) ->
     variable_positions = {variable: index for index, variable in enumerate(variables)}
     layers: list[KarnaughLayer] = []
     cell_lookup: dict[tuple[int, ...], tuple[str, str, str]] = {}
+    coordinate_lookup: dict[tuple[int, int, int], tuple[int, ...]] = {}
 
-    for layer_bits in layer_codes:
+    for layer_index, layer_bits in enumerate(layer_codes):
         grid_rows = []
         layer_label = (
             ", ".join(f"{name}={bit}" for name, bit in zip(layer_variables, layer_bits))
             if layer_variables
             else "base"
         )
-        for row_bits in row_codes:
+        for row_index, row_bits in enumerate(row_codes):
             values = []
-            for column_bits in column_codes:
+            for column_index, column_bits in enumerate(column_codes):
                 assignment = [0] * len(variables)
                 for name, bit in zip(row_variables, row_bits):
                     assignment[variable_positions[name]] = bit
@@ -317,6 +325,7 @@ def build_karnaugh_map(function: BooleanFunction, result: MinimizationResult) ->
                 for name, bit in zip(layer_variables, layer_bits):
                     assignment[variable_positions[name]] = bit
                 bits = tuple(assignment)
+                coordinate_lookup[(layer_index, row_index, column_index)] = bits
                 cell_lookup[bits] = (
                     layer_label,
                     _bits_label(row_bits),
@@ -334,13 +343,106 @@ def build_karnaugh_map(function: BooleanFunction, result: MinimizationResult) ->
                 grid=tuple(grid_rows),
             )
         )
+    return (
+        tuple(layers),
+        cell_lookup,
+        coordinate_lookup,
+        (len(layer_codes), len(row_codes), len(column_codes)),
+    )
 
-    groups: list[KarnaughGroup] = []
-    for implicant in result.selected_implicants:
-        cells = []
-        for bits in product((0, 1), repeat=len(variables)):
-            if all(pattern_bit == "-" or int(pattern_bit) == bit for pattern_bit, bit in zip(implicant.pattern, bits)):
-                cells.append(cell_lookup[tuple(bits)])
-        groups.append(KarnaughGroup(implicant, tuple(sorted(set(cells)))))
 
-    return KarnaughMap(tuple(layers), tuple(groups), result.expression)
+def _power_of_two_sizes(limit: int) -> tuple[int, ...]:
+    sizes = [1]
+    value = 2
+    while value <= limit:
+        sizes.append(value)
+        value *= 2
+    return tuple(sizes)
+
+
+def _wrapped_indexes(size: int, length: int, start: int) -> tuple[int, ...]:
+    return tuple((start + offset) % size for offset in range(length))
+
+
+def _pattern_from_cells(cells: tuple[tuple[int, ...], ...]) -> str:
+    if not cells:
+        return ""
+    width = len(cells[0])
+    pattern = []
+    for position in range(width):
+        values = {bits[position] for bits in cells}
+        pattern.append(str(values.pop()) if len(values) == 1 else "-")
+    return "".join(pattern)
+
+
+def build_karnaugh_map(
+    function: BooleanFunction,
+    result: MinimizationResult | None = None,
+) -> KarnaughMap:
+    del result  # Retained for backward compatibility; the map minimizes independently.
+    layers, cell_lookup, coordinate_lookup, dimensions = _karnaugh_layers(function)
+    minterms = function.minterm_indexes()
+    if not minterms:
+        return KarnaughMap(layers, (), "0")
+
+    candidates: dict[str, Implicant] = {}
+    candidate_cells: dict[str, tuple[tuple[str, str, str], ...]] = {}
+    layer_size, row_size, column_size = dimensions
+    layer_lengths = _power_of_two_sizes(layer_size)
+    row_lengths = _power_of_two_sizes(row_size)
+    column_lengths = _power_of_two_sizes(column_size)
+
+    for layer_length in layer_lengths:
+        for row_length in row_lengths:
+            for column_length in column_lengths:
+                for layer_start in range(layer_size):
+                    layer_indexes = _wrapped_indexes(layer_size, layer_length, layer_start)
+                    for row_start in range(row_size):
+                        row_indexes = _wrapped_indexes(row_size, row_length, row_start)
+                        for column_start in range(column_size):
+                            column_indexes = _wrapped_indexes(
+                                column_size, column_length, column_start
+                            )
+                            bits_group = tuple(
+                                coordinate_lookup[(layer_index, row_index, column_index)]
+                                for layer_index in layer_indexes
+                                for row_index in row_indexes
+                                for column_index in column_indexes
+                            )
+                            if any(function._value_by_bits[bits] == 0 for bits in bits_group):
+                                continue
+                            pattern = _pattern_from_cells(bits_group)
+                            candidates.setdefault(
+                                pattern,
+                                Implicant(
+                                    pattern,
+                                    frozenset(bits_to_index(bits) for bits in bits_group),
+                                ),
+                            )
+                            candidate_cells.setdefault(
+                                pattern,
+                                tuple(sorted({cell_lookup[bits] for bits in bits_group})),
+                            )
+
+    prime_implicants = tuple(
+        sorted(
+            (
+                implicant
+                for implicant in candidates.values()
+                if not any(
+                    implicant.minterms < other.minterms for other in candidates.values()
+                )
+            ),
+            key=_sort_key,
+        )
+    )
+    selected_implicants = _exact_cover(minterms, list(prime_implicants))
+    groups = tuple(
+        KarnaughGroup(implicant, candidate_cells[implicant.pattern])
+        for implicant in selected_implicants
+    )
+    return KarnaughMap(
+        layers=layers,
+        groups=groups,
+        expression=_expression_from_implicants(selected_implicants, function.variables, "0"),
+    )

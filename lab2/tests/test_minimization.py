@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 from boollab.core import BooleanFunction, index_to_bits
-from boollab.minimization import Implicant, _exact_cover, build_karnaugh_map, minimize_function
+from boollab.minimization import (
+    Implicant,
+    MinimizationResult,
+    _exact_cover,
+    build_karnaugh_map,
+    minimize_function,
+)
 
 
 def test_pdf_example_minimizes_to_a_or_bc() -> None:
@@ -20,6 +26,11 @@ def test_pdf_example_minimizes_to_a_or_bc() -> None:
         (False, True, True, True, True),
         (True, False, False, False, True),
     ]
+
+    kmap = build_karnaugh_map(function)
+
+    assert kmap.expression == "a | (b&c)"
+    assert {group.implicant.pattern for group in kmap.groups} == {"1--", "-11"}
 
 
 def test_exact_cover_search_handles_non_essential_case() -> None:
@@ -43,7 +54,7 @@ def test_exact_cover_search_handles_non_essential_case() -> None:
 def test_constant_functions_and_karnaugh_layouts() -> None:
     zero = BooleanFunction.from_expression("0")
     zero_result = minimize_function(zero)
-    zero_kmap = build_karnaugh_map(zero, zero_result)
+    zero_kmap = build_karnaugh_map(zero)
 
     assert zero_result.expression == "0"
     assert zero_result.chart_rows == ()
@@ -51,7 +62,7 @@ def test_constant_functions_and_karnaugh_layouts() -> None:
 
     one = BooleanFunction.from_expression("1")
     one_result = minimize_function(one)
-    one_kmap = build_karnaugh_map(one, one_result)
+    one_kmap = build_karnaugh_map(one)
 
     assert one_result.expression == "1"
     assert len(one_kmap.groups) == 1
@@ -64,10 +75,20 @@ def test_five_variable_karnaugh_map_uses_two_layers() -> None:
     function = BooleanFunction.from_truth_vector(variables, values, source_expression="e")
 
     result = minimize_function(function)
-    kmap = build_karnaugh_map(function, result)
+    kmap = build_karnaugh_map(function)
 
     assert result.expression == "e"
     assert len(kmap.layers) == 2
     assert kmap.layers[0].row_variables == ("a", "b")
     assert kmap.layers[0].column_variables == ("c", "d")
     assert {layer.label for layer in kmap.layers} == {"e=0", "e=1"}
+
+
+def test_karnaugh_map_does_not_depend_on_calculation_result() -> None:
+    function = BooleanFunction.from_expression("a|b")
+    bogus_result = MinimizationResult((), (), (), (), (), (), "0")
+
+    kmap = build_karnaugh_map(function, bogus_result)
+
+    assert kmap.expression == "a | b"
+    assert {group.implicant.pattern for group in kmap.groups} == {"1-", "-1"}
