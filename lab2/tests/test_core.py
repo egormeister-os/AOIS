@@ -44,6 +44,11 @@ def test_invalid_expressions_raise(expression: str) -> None:
         BooleanFunction.from_expression(expression)
 
 
+def test_missing_operator_reports_clear_error() -> None:
+    with pytest.raises(ExpressionError, match="Missing operator before '!' at position 8"):
+        BooleanFunction.from_expression("((a&b&!c!d)|!e)|((a&b&!c&!d)|!e)")
+
+
 def test_forms_post_classes_and_fictive_variables() -> None:
     function = BooleanFunction.from_expression("a|b")
 

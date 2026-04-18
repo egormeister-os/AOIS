@@ -31,7 +31,14 @@ def test_cli_can_run_full_crud_flow(tmp_path: Path, capsys) -> None:
     assert main(["--state", str(state), "list"]) == 0
     output = capsys.readouterr().out
     assert "Table H=3, B=10, count=2" in output
+    assert "bucket 0 (h=10): empty" in output
     assert "bucket 1 (h=11): 4='four' -> 1='updated'" in output
+    assert "| ID | C | T | Po | Pi      |" in output
+    assert "| 4  | 1 | 0 | #2 | four    |" in output
+    assert "| 1  | 1 | 1 | -  | updated |" in output
+    assert "| U |" not in output
+    assert "| L |" not in output
+    assert "| D |" not in output
 
     assert main(["--state", str(state), "delete", "4"]) == 0
     assert "removed value='four'" in capsys.readouterr().out

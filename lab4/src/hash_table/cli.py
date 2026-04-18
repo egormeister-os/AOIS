@@ -29,6 +29,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hash-table",
         description="Hash table CLI with linked-list collision chains.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  hash-table --state state.json init --size 5 --base 100\n"
+            "  hash-table --state state.json create 11 Alice\n"
+            "  hash-table --state state.json read 11\n"
+            "  hash-table --state state.json update 11 Alicia\n"
+            "  hash-table --state state.json delete 11\n"
+            "  hash-table --state state.json hash 11\n"
+            "  hash-table --state state.json list\n"
+            "  hash-table --state state.json demo --force\n"
+        ),
     )
     parser.add_argument(
         "--state",
@@ -67,7 +79,10 @@ def build_parser() -> argparse.ArgumentParser:
     hash_parser.add_argument("key", type=int)
     hash_parser.set_defaults(handler=_handle_hash)
 
-    list_parser = subparsers.add_parser("list", help="Print all buckets and chains.")
+    list_parser = subparsers.add_parser(
+        "list",
+        help="Print all buckets and chains in a cell-style table view.",
+    )
     list_parser.set_defaults(handler=_handle_list)
 
     demo_parser = subparsers.add_parser("demo", help="Fill the state file with demo data.")
@@ -164,7 +179,9 @@ def _handle_list(args: argparse.Namespace) -> str:
 
     for index, bucket in enumerate(table.buckets()):
         chain = " -> ".join(f"{key}='{value}'" for key, value in bucket)
+        lines.append("")
         lines.append(f"bucket {index} (h={table.base + index}): {chain or 'empty'}")
+        lines.extend(_format_bucket_table(bucket))
 
     return "\n".join(lines)
 
@@ -176,6 +193,53 @@ def _handle_demo(args: argparse.Namespace) -> str:
 
     table = save_demo_table(args.state, size=args.size, base=args.base)
     return f"Saved demo table: H={table.size}, B={table.base}, count={len(table)}, state='{args.state}'."
+
+
+def _format_bucket_table(bucket: tuple[tuple[int, str], ...]) -> list[str]:
+    headers = ("ID", "C", "T", "Po", "Pi")
+
+    if not bucket:
+        return []
+
+    rows = []
+    collision_flag = "1" if len(bucket) > 1 else "0"
+    last_index = len(bucket) - 1
+
+    for row_index, (key, value) in enumerate(bucket):
+        is_terminal = row_index == last_index
+        rows.append(
+            (
+                str(key),
+                collision_flag,
+                "1" if is_terminal else "0",
+                "-" if is_terminal else f"#{row_index + 2}",
+                _format_cell_value(value),
+            )
+        )
+
+    return _render_ascii_table(headers, rows)
+
+
+def _render_ascii_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
+    widths = [len(header) for header in headers]
+
+    for row in rows:
+        widths = [max(width, len(cell)) for width, cell in zip(widths, row)]
+
+    border = "+" + "+".join("-" * (width + 2) for width in widths) + "+"
+    lines = [border, _render_table_row(headers, widths), border]
+    lines.extend(_render_table_row(row, widths) for row in rows)
+    lines.append(border)
+    return lines
+
+
+def _render_table_row(cells: Sequence[str], widths: Sequence[int]) -> str:
+    padded_cells = [f" {cell:<{width}} " for cell, width in zip(cells, widths)]
+    return "|" + "|".join(padded_cells) + "|"
+
+
+def _format_cell_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("\n", "\\n").replace("|", "\\|")
 
 
 def _bucket_index(table: HashTable[str], key: int) -> int:

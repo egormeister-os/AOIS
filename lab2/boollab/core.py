@@ -134,6 +134,16 @@ class ExpressionParser:
         self.position += 1
         return token
 
+    def starts_operand(self, token: Token) -> bool:
+        return token.value in {"!", "("} or token.kind in {"var", "const"}
+
+    def ensure_operator_is_not_missing(self) -> None:
+        token = self.current()
+        if self.starts_operand(token):
+            raise ExpressionError(
+                f"Missing operator before '{token.value}' at position {token.position}"
+            )
+
     def parse(self) -> Node:
         if self.current().kind == "eof":
             raise ExpressionError("Expression is empty")
@@ -174,6 +184,7 @@ class ExpressionParser:
         while self.current().value == "&":
             operator = self.advance().value
             node = BinaryNode(operator, node, self.parse_unary())
+        self.ensure_operator_is_not_missing()
         return node
 
     def parse_unary(self) -> Node:
